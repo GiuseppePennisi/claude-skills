@@ -32,6 +32,8 @@ project-root/
 
 ## Installation
 
+**Do this before starting the dev server — skipping it causes `ERR_MODULE_NOT_FOUND`.**
+
 ```bash
 npm install -D tailwindcss @tailwindcss/vite
 # If TypeScript complains about 'path' module:
@@ -165,16 +167,59 @@ These become Tailwind utility classes: `text-primary-500`, `bg-accent-500`, etc.
 @theme { ... }
 ```
 
-## main.tsx CSS Import
+**Bootstrap variable bridging — REQUIRED when the app uses Bootstrap components:**
+
+`@theme` tokens (`--color-primary-500`, etc.) are Tailwind's namespace. Bootstrap components read `--bs-primary`, `--bs-primary-rgb`, etc. — they are entirely separate. Without an explicit bridge, `@theme` colors have **zero visual effect** on any Bootstrap button, badge, link, or text.
+
+Always add a `:root {}` block that covers all three layers:
+
+1. **App-level CSS tokens** — any `--color-primary` / `--color-primary-dark` etc. defined in the app's `index.css` that components reference via `var(--color-primary)`
+2. **Bootstrap component variables** — `--bs-primary`, `--bs-primary-rgb`, etc.
+3. **Link colors** — `--bs-link-color`, `--bs-link-hover-color`
+
+```css
+@theme {
+  --color-primary-500: #c20016;
+  --color-primary-700: #8b0010;
+  --color-primary-300: #e8334a;
+  /* ... */
+}
+
+:root {
+  /* 1. Override app-level tokens (used by var(--color-primary) in index.css classes) */
+  --color-primary:       #c20016;
+  --color-primary-dark:  #8b0010;
+  --color-primary-light: #e8334a;
+
+  /* 2. Bridge to Bootstrap component variables */
+  --bs-primary:          #c20016;
+  --bs-primary-rgb:      194, 0, 22;   /* must be raw R, G, B — no var() here */
+  --bs-link-color:       #c20016;
+  --bs-link-hover-color: #8b0010;
+}
+```
+
+Note: `--bs-primary-rgb` must be a raw `R, G, B` value (used inside `rgba()`), not a hex or `var()`.
+
+**Which tokens to override:** Read `index.css` and note every `--color-*` variable defined in its `:root` block that is used in component classes. Include all of them in the tenant `:root` — any you omit will fall back to the app's default color.
+
+
+## main.tsx CSS Import Order — CRITICAL
+
+**`@tenant-css` must be the last CSS import.** CSS custom properties follow cascade order: the last `:root {}` declaration with the same variable name wins. If the app has a base `index.css` that defines color tokens (e.g. `--color-primary: #0024c1`), importing it after `@tenant-css` silently overwrites the tenant's values.
 
 ```tsx
-// src/main.tsx
-import '@tenant-css'   // resolves to the correct tenant's theme.css via Vite alias
+// src/main.tsx — correct order
+import './index.css'    // app base styles + default color tokens
+import '@tenant-css'    // tenant overrides — MUST come last
+import App from './App'
 ```
 
 Never hardcode `import '../tenants/simple-tenant/theme.css'` — that bakes one tenant's styles into every build.
 
 **Untenanted fallback (`npm run dev`):** The root `vite.config.ts` does not define `@tenant-css`. Add a fallback alias there pointing to a shared base CSS, or point it at the default tenant's theme.
+
+**Note:** if `index.css` already contains `@import 'bootstrap/...'`, remove any separate Bootstrap import from `main.tsx` to avoid loading it twice.
 
 ## package.json Scripts
 
@@ -244,6 +289,7 @@ Before replacing `vite.config.ts`, note any project-specific settings (e.g. `bas
 
 | Mistake | Fix |
 |---------|-----|
+| `ERR_MODULE_NOT_FOUND: Cannot find package '@tailwindcss/vite'` | Run `npm install -D tailwindcss @tailwindcss/vite` before starting the dev server |
 | Object-spreading base config instead of `mergeConfig` | `mergeConfig` understands arrays (plugins); spread silently drops them |
 | Root-level `postcss.config.js` loading Tailwind | Remove it — `@tailwindcss/vite` conflicts with it |
 | Hardcoded tenant CSS import in `main.tsx` | Use `import '@tenant-css'` alias resolved by `createBaseConfig` |
@@ -257,3 +303,6 @@ Before replacing `vite.config.ts`, note any project-specific settings (e.g. `bas
 | `vite.config.base.ts` not in `tsconfig.node.json` | Widen `include` as shown above |
 | Dropping existing `base`, `optimizeDeps`, `server.proxy` | Carry them into `createBaseConfig` |
 | `@import "tailwindcss"` conflicts with Bootstrap/other resets | Use `@import "tailwindcss/theme"` + `@import "tailwindcss/utilities"` |
+| Tenant colors defined in `@theme` but not visible in Bootstrap UI | `@theme` tokens don't affect Bootstrap — add `:root { --bs-primary: ...; --bs-primary-rgb: R, G, B; }` bridge |
+| `@tenant-css` imported before `index.css` in `main.tsx` | `index.css` `:root` vars overwrite the tenant theme — `@tenant-css` must be the **last** CSS import |
+| Tenant `:root` only has `--bs-primary` but components stay the wrong color | Also override app-level tokens (`--color-primary`, `--color-primary-dark`, etc.) used by `var()` in `index.css` classes |
